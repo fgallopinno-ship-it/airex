@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AIREX | Monitor ambiental</title>
+  <meta name="description" content="Panel de monitoreo ambiental AIREX conectado a ThingSpeak.">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root{--bg:#f3f8f5;--card:#fff;--ink:#16332a;--muted:#63776e;--green:#16845b;--green2:#dff4e8;--line:#e0ebe4;--shadow:0 8px 28px #173d2b0d}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+    header{background:linear-gradient(120deg,#103f31,#16845b);color:#fff;padding:28px 20px}
+    .wrap{max-width:1180px;margin:auto}.top{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+    .brand{display:flex;align-items:center;gap:13px}.logo{width:48px;height:48px;border-radius:15px;background:#ffffff20;display:grid;place-items:center;font-size:25px}
+    h1{margin:0;font-size:clamp(26px,4vw,38px);letter-spacing:.5px}.subtitle{margin:6px 0 0;color:#d9f4e6}.status{padding:9px 13px;border:1px solid #ffffff55;border-radius:999px;font-size:13px}
+    main{padding:24px 20px 40px}.toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:18px;color:var(--muted);font-size:14px}
+    button{border:0;border-radius:10px;background:var(--green);color:white;font-weight:700;padding:11px 15px;cursor:pointer}button:hover{filter:brightness(.95)}button:disabled{opacity:.6;cursor:wait}
+    .grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:15px}.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:19px;box-shadow:var(--shadow);min-width:0}
+    .metric-label{font-size:13px;color:var(--muted);font-weight:650}.metric{font-size:clamp(27px,3vw,36px);font-weight:800;letter-spacing:-1px;margin:12px 0 6px}.unit{font-size:14px;color:var(--muted);font-weight:600}.detail{font-size:12px;color:var(--muted)}
+    .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;background:#9aa9a1}.section-title{font-size:19px;margin:0 0 15px}
+    .twocol{display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-top:15px}.chartbox{height:285px;position:relative}.table-wrap{overflow:auto}
+    table{width:100%;border-collapse:collapse;font-size:13px;white-space:nowrap}th,td{text-align:left;padding:12px 10px;border-bottom:1px solid var(--line)}th{color:var(--muted);font-weight:700;background:#f8fbf9}tbody tr:hover{background:#f7fbf8}
+    .state{font-weight:750}.state.good{color:#16845b}.state.warn{color:#b77908}.state.bad{color:#c53b3b}
+    .notice{background:#fff8e6;border:1px solid #f2dfaa;border-radius:12px;padding:13px 15px;color:#6c5313;font-size:13px;line-height:1.5;margin:16px 0}
+    .empty{padding:26px;text-align:center;color:var(--muted)}footer{text-align:center;color:var(--muted);font-size:12px;padding:10px 20px 28px}
+    @media(max-width:850px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.twocol{grid-template-columns:1fr}}
+    @media(max-width:480px){.grid{grid-template-columns:1fr 1fr;gap:9px}.card{padding:14px}.metric{font-size:25px}main{padding:17px 12px 30px}header{padding:23px 15px}}
+  </style>
+</head>
+<body>
+<header><div class="wrap top">
+  <div class="brand"><div class="logo">🌿</div><div><h1>AIREX</h1><p class="subtitle">Panel científico de monitoreo ambiental</p></div></div>
+  <div class="status" id="connectionStatus">● Preparando conexión…</div>
+</div></header>
+<main class="wrap">
+  <div class="toolbar"><div>Última actualización: <strong id="lastUpdate">—</strong></div><button id="refreshBtn" onclick="loadData()">↻ Actualizar datos</button></div>
+  <div class="grid">
+    <section class="card"><div class="metric-label">🌡️ Temperatura</div><div class="metric" id="temp">— <span class="unit">°C</span></div><div class="detail">Lectura del sensor DHT11</div></section>
+    <section class="card"><div class="metric-label">🌫️ Sensor de aire (MQ-135)</div><div class="metric" id="air">—</div><div class="detail">Valor analógico sin calibrar</div></section>
+    <section class="card"><div class="metric-label">🔊 Sonido (KY-038)</div><div class="metric" id="sound">—</div><div class="detail">Valor analógico sin calibrar</div></section>
+    <section class="card"><div class="metric-label">🚦 Estado AIREX</div><div class="metric state" id="airState">—</div><div class="detail" id="buzzerState">Zumbador: —</div></section>
+  </div>
+  <div class="notice"><strong>Nota científica:</strong> los valores del MQ-135 y KY-038 se muestran como lecturas analógicas sin calibrar; no son mediciones certificadas de ppm ni decibelios. El estado por colores usa los umbrales configurados en el programa del ESP32.</div>
+  <div class="twocol">
+    <section class="card"><h2 class="section-title">🌡️ Historial de temperatura</h2><div class="chartbox"><canvas id="tempChart"></canvas></div></section>
+    <section class="card"><h2 class="section-title">🌫️ Lecturas del sensor MQ-135</h2><div class="chartbox"><canvas id="airChart"></canvas></div></section>
+  </div>
+  <section class="card" style="margin-top:15px"><h2 class="section-title">📋 Historial de mediciones</h2><div class="toolbar"><span id="recordCount">Esperando mediciones…</span><button onclick="downloadCSV()">Descargar CSV</button></div>
+    <div class="table-wrap"><table><thead><tr><th>Fecha y hora</th><th>Temperatura (°C)</th><th>MQ-135 (raw)</th><th>KY-038 (raw)</th><th>Estado</th><th>Zumbador</th></tr></thead><tbody id="history"><tr><td colspan="6" class="empty">Cargando datos de ThingSpeak…</td></tr></tbody></table></div>
+  </section>
+  <div id="error" class="notice" style="display:none"></div>
+</main>
+<footer>AIREX · Datos recibidos desde ThingSpeak · El historial disponible depende de los datos guardados en el canal.</footer>
+<script>
+  // CONFIGURACIÓN: reemplaza CHANNEL_ID por el ID numérico de tu canal.
+  // Si el canal es privado, coloca la READ API KEY. Nunca pongas aquí la WRITE API KEY.
+  const CHANNEL_ID = "3543592";
+  const READ_API_KEY = ""; // Déjala vacía si tu canal es público.
+  const RESULTS = 100;
+  let records = [], tempChart, airChart;
+
+  function endpoint(){
+    let url = `https://api.thingspeak.com/channels/${encodeURIComponent(CHANNEL_ID)}/feeds.json?results=${RESULTS}`;
+    if (READ_API_KEY.trim()) url += `&api_key=${encodeURIComponent(READ_API_KEY.trim())}`;
+    return url;
+  }
+  function num(v){ if(v===null||v===undefined||v==="") return null; const n=Number(v); return Number.isFinite(n)?n:null; }
+  function stateFor(r){
+    const code=num(r.field4);
+    if(code===0) return {label:"Verde",cls:"good"};
+    if(code===1) return {label:"Amarillo",cls:"warn"};
+    if(code===2) return {label:"Rojo",cls:"bad"};
+    const v=num(r.field2);
+    if(v===null) return {label:"Sin dato",cls:""};
+    if(v>=600) return {label:"Rojo",cls:"bad"};
+    if(v>=200) return {label:"Amarillo",cls:"warn"};
+    return {label:"Verde",cls:"good"};
+  }
+  function fmtDate(d){return new Date(d).toLocaleString("es-CO",{dateStyle:"short",timeStyle:"medium"});}
+  function drawCharts(){
+    const labels=records.map(r=>new Date(r.created_at).toLocaleTimeString("es-CO",{hour:"2-digit",minute:"2-digit"}));
+    const common={responsive:true,maintainAspectRatio:false,interaction:{intersect:false,mode:"index"},plugins:{legend:{display:false}},scales:{x:{ticks:{maxTicksLimit:8}},y:{beginAtZero:false}}};
+    if(tempChart) tempChart.destroy();
+    if(airChart) airChart.destroy();
+    tempChart=new Chart(document.getElementById("tempChart"),{type:"line",data:{labels,datasets:[{label:"Temperatura °C",data:records.map(r=>num(r.field1)),spanGaps:true,tension:.25,pointRadius:2}]},options:common});
+    airChart=new Chart(document.getElementById("airChart"),{type:"line",data:{labels,datasets:[{label:"MQ-135 raw",data:records.map(r=>num(r.field2)),spanGaps:true,tension:.25,pointRadius:2}]},options:common});
+  }
+  function render(){
+    const latest=records[records.length-1];
+    if(!latest){document.getElementById("history").innerHTML='<tr><td colspan="6" class="empty">Todavía no hay mediciones disponibles.</td></tr>';return;}
+    const t=num(latest.field1), a=num(latest.field2), s=num(latest.field3), st=stateFor(latest);
+    document.getElementById("temp").innerHTML=`${t===null?"—":t.toFixed(1)} <span class="unit">°C</span>`;
+    document.getElementById("air").textContent=a===null?"—":Math.round(a);
+    document.getElementById("sound").textContent=s===null?"—":Math.round(s);
+    const stateEl=document.getElementById("airState");stateEl.textContent=st.label;stateEl.className=`metric state ${st.cls}`;
+    document.getElementById("buzzerState").textContent="Zumbador: "+(num(latest.field5)===1?"Activo":num(latest.field5)===0?"Inactivo":"sin dato");
+    document.getElementById("lastUpdate").textContent=fmtDate(latest.created_at);
+    document.getElementById("recordCount").textContent=`${records.length} mediciones recientes mostradas`;
+    document.getElementById("history").innerHTML=[...records].reverse().map(r=>{const state=stateFor(r);const t=num(r.field1),a=num(r.field2),s=num(r.field3),b=num(r.field5);return `<tr><td>${fmtDate(r.created_at)}</td><td>${t===null?"—":t.toFixed(1)}</td><td>${a===null?"—":Math.round(a)}</td><td>${s===null?"—":Math.round(s)}</td><td class="state ${state.cls}">${state.label}</td><td>${b===1?"Activo":b===0?"Inactivo":"—"}</td></tr>`;}).join("");
+    drawCharts();
+  }
+  async function loadData(){
+    const btn=document.getElementById("refreshBtn"), status=document.getElementById("connectionStatus"), err=document.getElementById("error");
+    btn.disabled=true;status.textContent="● Conectando…";err.style.display="none";
+    if(!CHANNEL_ID || CHANNEL_ID==="PON_AQUI_TU_CHANNEL_ID"){status.textContent="● Falta configurar";err.textContent="Antes de cargar datos, edita CHANNEL_ID en index.html y reemplaza PON_AQUI_TU_CHANNEL_ID por el número de tu canal ThingSpeak.";err.style.display="block";btn.disabled=false;return;}
+    try{
+      const response=await fetch(endpoint());
+      if(!response.ok) throw new Error("Respuesta HTTP "+response.status);
+      const data=await response.json();
+      if(data.status && String(data.status)!=="200") throw new Error(data.status);
+      records=(data.feeds||[]).filter(r=>r.created_at);
+      if(!records.length) throw new Error("ThingSpeak no devolvió mediciones. Comprueba que el canal tenga datos y que la Read API Key sea correcta si es privado.");
+      render();status.textContent="● Conectado a ThingSpeak";
+    }catch(e){status.textContent="● Sin conexión";err.textContent="No se pudieron cargar los datos. "+e.message+" Revisa el Channel ID y, si el canal es privado, la Read API Key.";err.style.display="block";}
+    finally{btn.disabled=false;}
+  }
+  function downloadCSV(){
+    if(!records.length){alert("Todavía no hay datos para descargar.");return;}
+    const rows=[["Fecha y hora","Temperatura C","MQ135 raw","KY038 raw","Estado","Zumbador"],...records.map(r=>[fmtDate(r.created_at),r.field1??"",r.field2??"",r.field3??"",stateFor(r).label,num(r.field5)===1?"Activo":num(r.field5)===0?"Inactivo":""])];
+    const csv=rows.map(row=>row.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\r\n");
+    const blob=new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8;"}), link=document.createElement("a");
+    link.href=URL.createObjectURL(blob);link.download="historial_AIREX.csv";link.click();URL.revokeObjectURL(link.href);
+  }
+  loadData();setInterval(loadData,30000);
+</script>
+</body>
+</html>
